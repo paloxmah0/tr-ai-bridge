@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::{read_dec, read_uuid};
 use crate::domain::{Account, TradingMode};
 use crate::error::AppResult;
 use rust_decimal::Decimal;
@@ -15,15 +16,17 @@ impl Db {
         currency: &str,
         mode: TradingMode,
     ) -> AppResult<Account> {
+        let id = Uuid::new_v4();
         let row = sqlx::query(
-            r#"INSERT INTO accounts (label, broker, account_ref, balance, currency, mode)
-               VALUES ($1, $2, $3, $4, $5, $6)
+            r#"INSERT INTO accounts (id, label, broker, account_ref, balance, currency, mode)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                RETURNING id, label, broker, account_ref, mode, balance, currency, created_at"#,
         )
+        .bind(id)
         .bind(label)
         .bind(broker)
         .bind(account_ref)
-        .bind(balance)
+        .bind(balance.to_string())
         .bind(currency)
         .bind(mode as TradingMode)
         .fetch_one(&self.pool)
@@ -67,21 +70,21 @@ impl Db {
     pub async fn adjust_balance(&self, id: Uuid, delta: Decimal) -> AppResult<Decimal> {
         let row = sqlx::query("UPDATE accounts SET balance = balance + $2 WHERE id = $1 RETURNING balance")
             .bind(id)
-            .bind(delta)
+            .bind(delta.to_string())
             .fetch_one(&self.pool)
             .await?;
-        Ok(row.get("balance"))
+        Ok(read_dec(&row, "balance"))
     }
 }
 
-fn map_account(row: &sqlx::postgres::PgRow) -> Account {
+fn map_account(row: &sqlx::sqlite::SqliteRow) -> Account {
     Account {
-        id: row.get("id"),
+        id: read_uuid(row, "id"),
         label: row.get("label"),
         broker: row.get("broker"),
         account_ref: row.get("account_ref"),
         mode: row.get("mode"),
-        balance: row.get("balance"),
+        balance: read_dec(row, "balance"),
         currency: row.get("currency"),
         created_at: row.get("created_at"),
     }

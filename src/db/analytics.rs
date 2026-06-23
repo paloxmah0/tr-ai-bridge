@@ -1,4 +1,4 @@
-use crate::db::Db;
+use crate::db::{read_dec, read_dec_opt, read_uuid, Db};
 use crate::error::AppResult;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -64,10 +64,10 @@ impl Db {
             winning_trades: wins,
             losing_trades: row.get("losses"),
             win_rate,
-            total_pnl: row.get("total_pnl"),
-            avg_pnl: row.get("avg_pnl"),
-            best_trade: row.get("best"),
-            worst_trade: row.get("worst"),
+            total_pnl: read_dec(&row, "total_pnl"),
+            avg_pnl: read_dec(&row, "avg_pnl"),
+            best_trade: read_dec_opt(&row, "best"),
+            worst_trade: read_dec_opt(&row, "worst"),
         })
     }
 
@@ -96,10 +96,10 @@ impl Db {
                     Decimal::ZERO
                 };
                 StrategyPerf {
-                    strategy_id: r.get("strategy_id"),
+                    strategy_id: read_uuid(r, "strategy_id"),
                     trades: r.get("trades"),
                     win_rate,
-                    total_pnl: r.get("total_pnl"),
+                    total_pnl: read_dec(r, "total_pnl"),
                 }
             })
             .collect())

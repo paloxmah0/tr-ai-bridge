@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::{read_bool, read_dec, read_dec_opt, read_uuid};
 use crate::domain::strategy::*;
 use crate::domain::{AssetClass, StrategySource};
 use crate::error::{AppError, AppResult};
@@ -13,27 +14,29 @@ impl Db {
         source: StrategySource,
     ) -> AppResult<Strategy> {
         let mut tx = self.pool.begin().await?;
-        let symbols = serde_json::to_value(&req.symbols)?;
+        let symbols = serde_json::to_string(&req.symbols)?;
+        let strategy_id = Uuid::new_v4();
 
         let row = sqlx::query(
-            r#"INSERT INTO strategies (account_id, name, description, asset_class, symbols, stop_loss, take_profit, risk_per_trade, source)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            r#"INSERT INTO strategies (id, account_id, name, description, asset_class, symbols, stop_loss, take_profit, risk_per_trade, source)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id, account_id, name, description, asset_class, symbols, stop_loss, take_profit,
                          risk_per_trade, enabled, source, created_at, updated_at"#,
         )
+        .bind(strategy_id)
         .bind(account_id)
         .bind(&req.name)
         .bind(req.description.as_ref())
         .bind(req.asset_class as AssetClass)
         .bind(symbols)
-        .bind(req.stop_loss)
-        .bind(req.take_profit)
-        .bind(req.risk_per_trade)
+        .bind(req.stop_loss.map(|d| d.to_string()))
+        .bind(req.take_profit.map(|d| d.to_string()))
+        .bind(req.risk_per_trade.to_string())
         .bind(source as StrategySource)
         .fetch_one(&mut *tx)
         .await?;
 
-        let strategy_id: Uuid = row.get("id");
+        let strategy_id: Uuid = read_uuid(&row, "id");
 
         for r in &req.rules {
             sqlx::query(
@@ -42,7 +45,7 @@ impl Db {
             .bind(strategy_id)
             .bind(&r.name)
             .bind(&r.expr)
-            .bind(r.weight)
+            .bind(r.weight.to_string())
             .execute(&mut *tx)
             .await?;
         }
@@ -97,19 +100,19 @@ impl Db {
         Ok(rows
             .iter()
             .map(|r| Rule {
-                id: r.get("id"),
-                strategy_id: r.get("strategy_id"),
+                id: read_uuid(r, "id"),
+                strategy_id: read_uuid(r, "strategy_id"),
                 name: r.get("name"),
                 expr: r.get("expr"),
-                weight: r.get("weight"),
-                enabled: r.get("enabled"),
+                weight: read_dec(r, "weight"),
+                enabled: read_bool(r, "enabled"),
             })
             .collect())
     }
 
     pub async fn update_strategy(&self, id: Uuid, req: &UpdateStrategy) -> AppResult<Option<Strategy>> {
         let symbols_json = match &req.symbols {
-            Some(s) => Some(serde_json::to_value(s)?),
+            Some(s) => Some(serde_json::to_string(s)?),
             None => None,
         };
         sqlx::query(
@@ -121,16 +124,16 @@ impl Db {
                  take_profit = COALESCE($6, take_profit),
                  risk_per_trade = COALESCE($7, risk_per_trade),
                  enabled = COALESCE($8, enabled),
-                 updated_at = now()
+                 updated_at = datetime('now')
                WHERE id = $1"#,
         )
         .bind(id)
         .bind(req.name.as_ref())
         .bind(req.description.as_ref())
         .bind(symbols_json)
-        .bind(req.stop_loss)
-        .bind(req.take_profit)
-        .bind(req.risk_per_trade)
+        .bind(req.stop_loss.map(|inner| inner.map(|d| d.to_string())))
+        .bind(req.take_profit.map(|inner| inner.map(|d| d.to_string())))
+        .bind(req.risk_per_trade.map(|d| d.to_string()))
         .bind(req.enabled)
         .execute(&self.pool)
         .await?;
@@ -146,20 +149,20 @@ impl Db {
     }
 }
 
-fn map_strategy(row: &sqlx::postgres::PgRow) -> Strategy {
-    let symbols_val: serde_json::Value = row.get("symbols");
-    let symbols: Vec<String> = serde_json::from_value(symbols_val).unwrap_or_default();
+fn map_strategy(row: &sqlx::sqlite::SqliteRow) -> Strategy {
+    let symbols_val: String = row.get("symbols");
+    let symbols: Vec<String> = serde_json::from_str(&symbols_val).unwrap_or_default();
     Strategy {
-        id: row.get("id"),
-        account_id: row.get("account_id"),
+        id: read_uuid(row, "id"),
+        account_id: read_uuid(row, "account_id"),
         name: row.get("name"),
         description: row.get("description"),
         asset_class: row.get("asset_class"),
         symbols,
-        stop_loss: row.get("stop_loss"),
-        take_profit: row.get("take_profit"),
-        risk_per_trade: row.get("risk_per_trade"),
-        enabled: row.get("enabled"),
+        stop_loss: read_dec_opt(row, "stop_loss"),
+        take_profit: read_dec_opt(row, "take_profit"),
+        risk_per_trade: read_dec(row, "risk_per_trade"),
+        enabled: read_bool(row, "enabled"),
         source: row.get("source"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),

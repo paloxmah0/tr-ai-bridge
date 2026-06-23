@@ -22,7 +22,7 @@ use config::Settings;
 use dynamic_config::{DynamicConfig, keys};
 use llm::LlmClient;
 use market::{Broker, DerivClient, MarketProvider, MarketRegistry, OandaClient};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::sqlite::SqlitePoolOptions;
 use state::AppState;
 
 use crate::db::Db;
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let settings = Arc::new(Settings::load()?);
 
     // Lazy pool — no connection attempt, returns instantly.
-    let pool = PgPoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(10)
         .connect_lazy(&settings.database.url)?;
 

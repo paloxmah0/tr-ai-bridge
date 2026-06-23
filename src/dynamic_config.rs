@@ -32,8 +32,8 @@ impl DynamicConfig {
         Self {
             values: Arc::new(RwLock::new(env_defaults)),
             db: Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost")
+                sqlx::sqlite::SqlitePoolOptions::new()
+                    .connect_lazy("sqlite::memory:")
                     .unwrap_or_else(|_| panic!("failed to create dummy pool")),
             ),
         }

@@ -1,0 +1,5 @@
+[2m2026-06-23T23:39:24.128335Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
+[2m2026-06-23T23:39:24.130797Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
+[2m2026-06-23T23:39:24.137493Z[0m [31mERROR[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine tick failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: strategies
+[2m2026-06-23T23:39:24.167548Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
+[2m2026-06-23T23:39:24.170835Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB

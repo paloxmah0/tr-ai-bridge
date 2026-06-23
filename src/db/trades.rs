@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::{read_dec, read_dec_opt, read_uuid, read_uuid_opt};
 use crate::domain::signal::Signal;
 use crate::domain::trade::*;
 use crate::domain::{OrderType, Side, TradingMode};
@@ -18,13 +19,13 @@ impl Db {
         .bind(s.account_id)
         .bind(&s.symbol)
         .bind(s.side as Side)
-        .bind(s.price)
-        .bind(s.strength)
+        .bind(s.price.to_string())
+        .bind(s.strength.to_string())
         .bind(&s.rationale)
         .bind(s.mode as TradingMode)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.get("id"))
+        Ok(read_uuid(&row, "id"))
     }
 
     pub async fn list_signals(&self, account_id: Uuid, limit: i64) -> AppResult<Vec<Signal>> {
@@ -53,30 +54,30 @@ impl Db {
         .bind(t.side as Side)
         .bind(t.order_type as OrderType)
         .bind(t.mode as TradingMode)
-        .bind(t.size)
-        .bind(t.entry_price)
-        .bind(t.exit_price)
-        .bind(t.stop_loss)
-        .bind(t.take_profit)
-        .bind(t.pnl)
+        .bind(t.size.to_string())
+        .bind(t.entry_price.to_string())
+        .bind(t.exit_price.map(|d| d.to_string()))
+        .bind(t.stop_loss.map(|d| d.to_string()))
+        .bind(t.take_profit.map(|d| d.to_string()))
+        .bind(t.pnl.map(|d| d.to_string()))
         .bind(t.status as TradeStatus)
         .bind(t.opened_at)
         .bind(t.closed_at)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.get("id"))
+        Ok(read_uuid(&row, "id"))
     }
 
     pub async fn close_trade(&self, id: Uuid, exit_price: Decimal, pnl: Decimal) -> AppResult<Option<Trade>> {
         let row = sqlx::query(
-            r#"UPDATE trades SET status = 'closed', exit_price = $2, pnl = $3, closed_at = now()
+            r#"UPDATE trades SET status = 'closed', exit_price = $2, pnl = $3, closed_at = datetime('now')
                WHERE id = $1 AND status = 'open'
                RETURNING id, account_id, strategy_id, signal_id, symbol, side, order_type, mode,
                          size, entry_price, exit_price, stop_loss, take_profit, pnl, status, opened_at, closed_at"#,
         )
         .bind(id)
-        .bind(exit_price)
-        .bind(pnl)
+        .bind(exit_price.to_string())
+        .bind(pnl.to_string())
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.as_ref().map(map_trade))
@@ -107,37 +108,37 @@ impl Db {
     }
 }
 
-fn map_signal(row: &sqlx::postgres::PgRow) -> Signal {
+fn map_signal(row: &sqlx::sqlite::SqliteRow) -> Signal {
     Signal {
-        id: row.get("id"),
-        strategy_id: row.get("strategy_id"),
-        account_id: row.get("account_id"),
+        id: read_uuid(row, "id"),
+        strategy_id: read_uuid(row, "strategy_id"),
+        account_id: read_uuid(row, "account_id"),
         symbol: row.get("symbol"),
         side: row.get("side"),
-        price: row.get("price"),
-        strength: row.get("strength"),
+        price: read_dec(row, "price"),
+        strength: read_dec(row, "strength"),
         rationale: row.get("rationale"),
         mode: row.get("mode"),
         created_at: row.get("created_at"),
     }
 }
 
-fn map_trade(row: &sqlx::postgres::PgRow) -> Trade {
+fn map_trade(row: &sqlx::sqlite::SqliteRow) -> Trade {
     Trade {
-        id: row.get("id"),
-        account_id: row.get("account_id"),
-        strategy_id: row.get("strategy_id"),
-        signal_id: row.get("signal_id"),
+        id: read_uuid(row, "id"),
+        account_id: read_uuid(row, "account_id"),
+        strategy_id: read_uuid(row, "strategy_id"),
+        signal_id: read_uuid_opt(row, "signal_id"),
         symbol: row.get("symbol"),
         side: row.get("side"),
         order_type: row.get("order_type"),
         mode: row.get("mode"),
-        size: row.get("size"),
-        entry_price: row.get("entry_price"),
-        exit_price: row.get("exit_price"),
-        stop_loss: row.get("stop_loss"),
-        take_profit: row.get("take_profit"),
-        pnl: row.get("pnl"),
+        size: read_dec(row, "size"),
+        entry_price: read_dec(row, "entry_price"),
+        exit_price: read_dec_opt(row, "exit_price"),
+        stop_loss: read_dec_opt(row, "stop_loss"),
+        take_profit: read_dec_opt(row, "take_profit"),
+        pnl: read_dec_opt(row, "pnl"),
         status: row.get("status"),
         opened_at: row.get("opened_at"),
         closed_at: row.get("closed_at"),

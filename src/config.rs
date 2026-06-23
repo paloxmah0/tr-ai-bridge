@@ -68,6 +68,12 @@ impl Settings {
     pub fn load() -> anyhow::Result<Self> {
         let _ = dotenvy::dotenv();
 
+        // Auto-create .env from .env.example if missing.
+        if !std::path::Path::new(".env").exists() && std::path::Path::new(".env.example").exists() {
+            let _ = std::fs::copy(".env.example", ".env");
+            let _ = dotenvy::dotenv();
+        }
+
         let table = serde_json::json!({
             "server": {
                 "host": env("SERVER_HOST").parse().unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -75,7 +81,7 @@ impl Settings {
             },
             "database": {
                 "url": std::env::var("DATABASE_URL")
-                    .unwrap_or_else(|_| "postgres://trading:trading@localhost:5432/trading".into()),
+                    .unwrap_or_else(|_| "sqlite://trading.db?mode=rwc".into()),
             },
             "llm": {
                 "base_url": std::env::var("LLM_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into()),
