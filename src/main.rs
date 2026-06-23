@@ -39,18 +39,14 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(Settings::load()?);
 
-    // Lazy pool so the server starts even if PostgreSQL isn't reachable yet.
+    // Lazy pool — no connection attempt, returns instantly.
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect_lazy(&settings.database.url)?;
 
     let db = Db::new(pool);
-    match db.run_migrations().await {
-        Ok(()) => tracing::info!("database migrations applied"),
-        Err(e) => tracing::warn!(error = %e, "database unavailable — server starting in degraded mode"),
-    }
 
-    // Build the dynamic config from env defaults + DB-persisted values.
+    // Build initial config from env defaults only — instant, no DB hit.
     let mut env_defaults = HashMap::new();
     env_defaults.insert(keys::LLM_BASE_URL.to_string(), settings.llm.base_url.clone());
     env_defaults.insert(keys::LLM_API_KEY.to_string(), settings.llm.api_key.clone());
@@ -62,7 +58,11 @@ async fn main() -> anyhow::Result<()> {
     env_defaults.insert(keys::OANDA_API_TOKEN.to_string(), settings.oanda.api_key.clone());
     env_defaults.insert(keys::OANDA_ACCOUNT_ID.to_string(), settings.oanda.account_id.clone());
 
-    let config = Arc::new(DynamicConfig::new(db.clone(), env_defaults).await);
+    // Start with env-only config; overlay DB values in the background once
+    // the database is reachable. This keeps startup instant.
+    let mut config = DynamicConfig::from_defaults(env_defaults);
+    config.with_db(db.clone());
+    let config = Arc::new(config);
 
     // Clients read credentials from the shared config, so tokens set via the
     // Settings page take effect immediately.
@@ -87,6 +87,21 @@ async fn main() -> anyhow::Result<()> {
         ingest: ingest.clone(),
         markets: markets.clone(),
     };
+
+    // Background: run DB migrations + overlay DB-persisted settings.
+    // Non-blocking — the server starts immediately and these complete in
+    // the background once PostgreSQL is reachable.
+    {
+        let db = db.clone();
+        let config = config.clone();
+        tokio::spawn(async move {
+            match db.run_migrations().await {
+                Ok(()) => tracing::info!("database migrations applied"),
+                Err(e) => tracing::warn!(error = %e, "database unavailable — run in degraded mode until DB is up"),
+            }
+            config.overlay_db().await;
+        });
+    }
 
     // Background engine loop.
     {

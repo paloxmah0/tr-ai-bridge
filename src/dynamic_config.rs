@@ -26,6 +26,38 @@ impl DynamicConfig {
         Self { values: Arc::new(RwLock::new(values)), db }
     }
 
+    /// Create from env defaults only — instant, no DB hit. The `db` field
+    /// should be set via `with_db` before calling `overlay_db`.
+    pub fn from_defaults(env_defaults: HashMap<String, String>) -> Self {
+        Self {
+            values: Arc::new(RwLock::new(env_defaults)),
+            db: Db::new(
+                sqlx::postgres::PgPoolOptions::new()
+                    .connect_lazy("postgres://localhost")
+                    .unwrap_or_else(|_| panic!("failed to create dummy pool")),
+            ),
+        }
+    }
+
+    /// Attach a real DB pool after construction (used with `from_defaults`).
+    pub fn with_db(&mut self, db: Db) {
+        self.db = db;
+    }
+
+    /// Try to load DB-persisted settings and overlay them on top of env
+    /// defaults. Non-blocking if the DB is unreachable (just logs a warning).
+    pub async fn overlay_db(&self) {
+        if let Ok(db_vals) = self.db.load_settings().await {
+            let mut guard = self.values.write().await;
+            for (k, v) in db_vals {
+                guard.insert(k, v);
+            }
+            tracing::info!("loaded persisted settings from DB");
+        } else {
+            tracing::warn!("could not load settings from DB (using env defaults)");
+        }
+    }
+
     pub fn shared(&self) -> SharedConfig {
         self.values.clone()
     }
