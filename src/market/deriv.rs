@@ -64,10 +64,12 @@ impl DerivClient {
     }
 
     async fn token(&self) -> String {
-        self.config.read().await
+        let t = self.config.read().await
             .get(crate::dynamic_config::keys::DERIV_API_TOKEN)
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Trim whitespace — tokens pasted from the browser often have it.
+        t.trim().to_string()
     }
 
     /// Ensure a connected + authorized socket exists; reconnect if dropped
@@ -114,13 +116,20 @@ impl DerivClient {
 
         // Authorize if a token is configured.
         if !token.is_empty() {
+            tracing::info!(token_len = token.len(), "attempting deriv authorize");
             let auth = self
                 .send_raw(serde_json::json!({ "authorize": token }))
                 .await?;
             if auth.get("error").is_some() {
                 let msg = auth["error"]["message"].as_str().unwrap_or("authorize failed");
+                let code = auth["error"]["code"].as_str().unwrap_or("");
                 self.disconnect().await;
-                return Err(AppError::Unauthorized(format!("deriv authorize: {msg}")));
+                let hint = match code {
+                    "InputValidationFailed" => " (token may not match app_id — use app_id 1089 or your registered app_id)",
+                    "InvalidToken" => " (token is invalid or expired — generate a new one from Deriv dashboard)",
+                    _ => "",
+                };
+                return Err(AppError::Unauthorized(format!("deriv authorize: {msg}{hint}")));
             }
             *self.authorized.lock().await = true;
             tracing::info!("deriv authorized");

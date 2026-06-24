@@ -56,7 +56,9 @@ pub async fn update(
         if v.starts_with("••••") {
             continue;
         }
-        state.config.set(k, v).await?;
+        // Trim whitespace from all values (tokens pasted from browser).
+        let cleaned = v.trim();
+        state.config.set(k, cleaned).await?;
         updated.push(k.clone());
     }
     Ok(Json(serde_json::json!({ "updated": updated })))
