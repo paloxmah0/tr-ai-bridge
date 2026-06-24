@@ -15,6 +15,7 @@ mod insights;
 mod learning;
 mod llm;
 mod market;
+mod news;
 mod seeder;
 mod state;
 

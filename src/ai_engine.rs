@@ -59,6 +59,8 @@ pub struct Prediction {
     pub recent_candles: Vec<CandleSummary>,
     /// Upper timeframe states.
     pub upper_timeframe_context: Vec<UpperTFContext>,
+    /// News impact assessment.
+    pub news: crate::news::NewsAssessment,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -550,10 +552,52 @@ pub async fn analyze(
         });
     }
 
-    // 5. Determine market state from the evidence.
+    // 5. News assessment — check for high-impact events.
+    let news = crate::news::assess_news(symbol).await.unwrap_or_else(|_| crate::news::NewsAssessment {
+        status: "clear".into(),
+        upcoming_high_impact: vec![],
+        upcoming_medium_impact: vec![],
+        recently_released: vec![],
+        summary: "News data unavailable.".into(),
+        recommendation: "Proceed normally.".into(),
+    });
+
+    // Add news as evidence.
+    match news.status.as_str() {
+        "danger" => {
+            // High-impact news: reduce confidence, add caution.
+            evidence.push(Evidence {
+                source: "news".into(),
+                finding: news.summary.clone(),
+                confirms: "neutral".into(),
+                weight: Decimal::ZERO,
+            });
+            // Reduce both bull and bear by 20% — news creates uncertainty.
+            bull = bull * Decimal::new(8, 1) / Decimal::from(10);
+            bear = bear * Decimal::new(8, 1) / Decimal::from(10);
+        }
+        "caution" => {
+            evidence.push(Evidence {
+                source: "news".into(),
+                finding: news.summary.clone(),
+                confirms: "neutral".into(),
+                weight: Decimal::ZERO,
+            });
+        }
+        _ => {
+            evidence.push(Evidence {
+                source: "news".into(),
+                finding: "No high-impact news — market is clear of news volatility.".into(),
+                confirms: "neutral".into(),
+                weight: Decimal::ZERO,
+            });
+        }
+    }
+
+    // 6. Determine market state from the evidence.
     let market_state = determine_market_state(&ind);
 
-    // 6. Derive trade bias from the weight of evidence.
+    // 7. Derive trade bias from the weight of evidence.
     // Bold: commit when evidence is clear (>50%), not cautious (55%).
     let total = bull + bear;
     let (direction, evidence_score): (String, Decimal) = if total == Decimal::ZERO {
@@ -614,6 +658,13 @@ pub async fn analyze(
     }
     what_to_watch.push(format!("Next candle in {} — watch the open. If it gaps in the bias direction, confidence increases.", format_countdown((candles.last().unwrap().ts + Duration::seconds(tf_secs as i64) - now).num_seconds().max(0))));
 
+    // News watch.
+    if news.status == "danger" {
+        what_to_watch.push(format!("NEWS ALERT: {}. {}", news.summary, news.recommendation));
+    } else if news.status == "caution" {
+        what_to_watch.push(format!("News caution: {}. {}", news.summary, news.recommendation));
+    }
+
     // 9. Timing.
     let last_candle_ts = candles.last().unwrap().ts;
     let next_candle_start = last_candle_ts + Duration::seconds(tf_secs as i64);
@@ -655,6 +706,7 @@ pub async fn analyze(
         countdown,
         recent_candles: recent,
         upper_timeframe_context: upper_context,
+        news,
     })
 }
 

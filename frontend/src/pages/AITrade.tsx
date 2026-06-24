@@ -278,6 +278,30 @@ export default function AITrade() {
             </div>
           )}
 
+          {/* News impact */}
+          {prediction.news && (
+            <div className={`card ${prediction.news.status === "danger" ? "border-bad/40" : prediction.news.status === "caution" ? "border-warn/30" : "border-ink-700"}`}>
+              <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                {prediction.news.status === "danger" && <span className="badge bg-bad/20 text-bad">NEWS ALERT</span>}
+                {prediction.news.status === "caution" && <span className="badge bg-warn/20 text-warn">NEWS CAUTION</span>}
+                {prediction.news.status === "clear" && <span className="badge bg-ok/20 text-ok">NO NEWS RISK</span>}
+              </h3>
+              <p className="text-sm text-gray-300 mb-2">{prediction.news.summary}</p>
+              <p className="text-xs text-muted">{prediction.news.recommendation}</p>
+              {prediction.news.upcoming_high_impact.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {prediction.news.upcoming_high_impact.map((e, i) => (
+                    <div key={i} className="text-xs bg-bad/5 rounded px-2 py-1 border border-bad/20">
+                      <span className="badge bg-bad/20 text-bad mr-2">{e.country}</span>
+                      <span className="text-gray-300">{e.title}</span>
+                      {e.forecast && <span className="text-muted ml-2">Forecast: {e.forecast}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* What to watch */}
           {prediction.what_to_watch && prediction.what_to_watch.length > 0 && (
             <div className="card border-warn/20">

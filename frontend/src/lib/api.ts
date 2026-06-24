@@ -140,6 +140,14 @@ export interface UpperTFContext {
   label: string; trend: string; last_candle_dir: string; rsi: number; adx: number;
   pattern: string; summary: string;
 }
+export interface NewsEvent {
+  title: string; country: string; date: string; impact: string;
+  forecast: string; previous: string;
+}
+export interface NewsAssessment {
+  status: string; upcoming_high_impact: NewsEvent[]; upcoming_medium_impact: NewsEvent[];
+  recently_released: NewsEvent[]; summary: string; recommendation: string;
+}
 export interface Prediction {
   market_state: string; direction: string; evidence_score: number;
   entry_price: number; stop_loss: number; take_profit: number;
@@ -151,4 +159,5 @@ export interface Prediction {
   seconds_to_next_candle: number; countdown: string;
   recent_candles: CandleSummary[];
   upper_timeframe_context: UpperTFContext[];
+  news: NewsAssessment;
 }
