@@ -13,6 +13,7 @@ mod ingest;
 mod insights;
 mod llm;
 mod market;
+mod seeder;
 mod state;
 
 use std::collections::HashMap;
@@ -98,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
         markets: markets.clone(),
     };
 
-    // Background: run DB migrations + overlay DB-persisted settings.
+    // Background: run DB migrations + overlay DB-persisted settings + seed data.
     // Non-blocking — the server starts immediately and these complete in
     // the background once PostgreSQL is reachable.
     {
@@ -110,6 +111,10 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => tracing::warn!(error = %e, "database unavailable — run in degraded mode until DB is up"),
             }
             config.overlay_db().await;
+            // Seed demo data if database is empty (first run).
+            if let Err(e) = seeder::seed_if_empty(&db).await {
+                tracing::warn!(error = %e, "seeding failed");
+            }
         });
     }
 
