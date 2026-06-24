@@ -148,6 +148,11 @@ export interface NewsAssessment {
   status: string; upcoming_high_impact: NewsEvent[]; upcoming_medium_impact: NewsEvent[];
   recently_released: NewsEvent[]; summary: string; recommendation: string;
 }
+export interface EntryChecklist {
+  trend_aligned: boolean; momentum_aligned: boolean; pattern_confirmed: boolean;
+  no_news_risk: boolean; risk_reward_ok: boolean; session_active: boolean;
+  ready: boolean; details: string[];
+}
 export interface Prediction {
   market_state: string; direction: string; evidence_score: number;
   entry_price: number; stop_loss: number; take_profit: number;
@@ -160,4 +165,5 @@ export interface Prediction {
   recent_candles: CandleSummary[];
   upper_timeframe_context: UpperTFContext[];
   news: NewsAssessment;
+  entry_checklist: EntryChecklist;
 }

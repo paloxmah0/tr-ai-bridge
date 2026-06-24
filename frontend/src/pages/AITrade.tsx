@@ -209,6 +209,24 @@ export default function AITrade() {
             </div>
           </div>
 
+          {/* Entry checklist */}
+          {prediction.entry_checklist && (
+            <div className={`card border-2 ${prediction.entry_checklist.ready ? "border-ok/40" : "border-warn/30"}`}>
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                {prediction.entry_checklist.ready ? <span className="badge bg-ok/20 text-ok">ALL CONDITIONS MET</span> : <span className="badge bg-warn/20 text-warn">NOT READY</span>}
+                Entry Checklist
+              </h3>
+              <div className="space-y-1">
+                {prediction.entry_checklist.details.map((d, i) => (
+                  <div key={i} className={`text-sm flex items-start gap-2 ${d.includes("ALL") ? "text-ok font-bold" : d.includes("NOT ALL") ? "text-warn font-bold" : "text-gray-300"}`}>
+                    <span>{d.includes("YES") ? "✅" : d.includes("NO") ? "❌" : d.includes("ALL") ? "→" : "•"}</span>
+                    {d}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Trade levels + trade button */}
           {prediction.direction !== "wait" && (
             <>
