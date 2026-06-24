@@ -231,12 +231,14 @@ async fn reader_loop(
 /// Forex: "EUR/USD" -> "frxEURUSD". Known index tokens pass through.
 pub fn to_deriv_symbol(symbol: &str) -> String {
     let trimmed = symbol.trim();
-    // Known Deriv synthetic/derived index prefixes pass through unchanged.
-    const INDEX_PREFIXES: &[&str] = &["R_", "BOOM", "CRASH", "stp", "JD", "OTC", "1HZ", "jump"];
-    let upper = trimmed.to_uppercase();
-    if INDEX_PREFIXES.iter().any(|p| upper.starts_with(p)) || upper.contains('_') {
+    // Already a valid Deriv symbol — pass through.
+    if trimmed.starts_with("frx") || trimmed.starts_with("R_") || trimmed.starts_with("BOOM")
+        || trimmed.starts_with("CRASH") || trimmed.starts_with("stp") || trimmed.starts_with("JD")
+        || trimmed.starts_with("OTC") || trimmed.starts_with("1HZ") || trimmed.starts_with("jump")
+    {
         return trimmed.to_string();
     }
+    // Forex pair like "EUR/USD" or "EURUSD" -> "frxEURUSD"
     let alnum: String = trimmed.chars().filter(|c| c.is_alphanumeric()).collect();
     format!("frx{alnum}")
 }

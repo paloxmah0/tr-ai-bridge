@@ -48,7 +48,7 @@ pub fn evaluate_at(rules: &[Rule], ind: &Indicators) -> AppResult<Option<WindowS
     if total_weight == Decimal::ZERO || fired_weight == Decimal::ZERO {
         return Ok(None);
     }
-    let strength = fired_weight / total_weight;
+    let strength = (fired_weight / total_weight).round_dp(6);
     let side = if ind.pct_change >= Decimal::ZERO { Side::Buy } else { Side::Sell };
     let rationale = format!(
         "Fired rules: {} (strength {:.2}%)",

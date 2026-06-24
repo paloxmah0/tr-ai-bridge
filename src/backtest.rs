@@ -138,10 +138,12 @@ pub fn run(strategy: &Strategy, rules: &[Rule], candles: &[Candle]) -> AppResult
 
         // Track equity curve + drawdown.
         let unrealized = position.as_ref().map(|p| p.unrealized(bar.close)).unwrap_or(Decimal::ZERO);
-        let mark = equity + unrealized;
+        let mark = (equity + unrealized).round_dp(6);
         equity_curve.push(EquityPoint { ts: bar.ts, equity: mark });
         if mark > peak { peak = mark; }
-        let dd = if peak > Decimal::ZERO { (peak - mark) / peak * Decimal::from(100) } else { Decimal::ZERO };
+        let dd = if peak > Decimal::ZERO {
+            ((peak - mark) / peak * Decimal::from(100)).round_dp(4)
+        } else { Decimal::ZERO };
         if dd > max_dd { max_dd = dd; }
     }
 
@@ -172,7 +174,7 @@ pub fn run(strategy: &Strategy, rules: &[Rule], candles: &[Candle]) -> AppResult
     } else { Decimal::ZERO };
     let avg_pnl = if closed > 0 { total_pnl / Decimal::from(closed) } else { Decimal::ZERO };
     let total_return_pct = if initial_balance != Decimal::ZERO {
-        total_pnl / initial_balance * Decimal::from(100)
+        (total_pnl / initial_balance * Decimal::from(100)).round_dp(2)
     } else { Decimal::ZERO };
     let sharpe = sharpe(&returns);
 
@@ -210,7 +212,7 @@ impl OpenPos {
             Side::Buy => exit - self.entry_price,
             Side::Sell => self.entry_price - exit,
         };
-        per_unit * self.size
+        (per_unit * self.size).round_dp(4)
     }
     fn unrealized(&self, price: Decimal) -> Decimal {
         self.pnl(price)
@@ -245,24 +247,26 @@ fn levels(strategy: &Strategy, side: Side, entry: Decimal) -> (Option<Decimal>, 
     let stop = strategy.stop_loss.map(|p| {
         let d = p * pip;
         match side { Side::Buy => entry - d, Side::Sell => entry + d }
-    });
+    }).map(|v| v.round_dp(6));
     let tp = strategy.take_profit.map(|p| {
         let d = p * pip;
         match side { Side::Buy => entry + d, Side::Sell => entry - d }
-    });
+    }).map(|v| v.round_dp(6));
     (stop, tp)
 }
 
 fn position_size(balance: Decimal, risk_per_trade: Decimal, entry: Decimal, stop: Option<Decimal>) -> Decimal {
     let risk_amount = balance * risk_per_trade;
-    match stop {
+    let size = match stop {
         Some(s) if s != entry && s != Decimal::ZERO => {
             let per_unit = (entry - s).abs();
             if per_unit == Decimal::ZERO { return Decimal::ZERO; }
             risk_amount / per_unit
         }
         _ => balance * Decimal::new(1, 2) / entry,
-    }
+    };
+    // Round to avoid Decimal precision overflow in downstream PnL calculations.
+    size.round_dp(6)
 }
 
 /// Annualization-free, simplified Sharpe: mean(return) / std(return).

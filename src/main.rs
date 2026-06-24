@@ -72,12 +72,22 @@ async fn main() -> anyhow::Result<()> {
     let deriv_client = Arc::new(DerivClient::new(config.shared(), settings.deriv_granularity_secs));
     let oanda_client = OandaClient::new(config.shared(), settings.deriv_granularity_secs);
 
-    let deriv: Arc<dyn MarketProvider> = deriv_client.clone();
-    let oanda: Arc<dyn MarketProvider> = oanda_client.clone();
-    let deriv_broker: Arc<dyn Broker> = deriv_client.clone();
-    let oanda_broker: Arc<dyn Broker> = oanda_client.clone();
+    // Use Deriv for ALL market data when OANDA token isn't set — Deriv provides
+    // both synthetic indices AND forex pairs (frxEURUSD etc.) without a token.
+    let oanda_token = config.get(crate::dynamic_config::keys::OANDA_API_TOKEN).await;
+    let (forex_provider, forex_broker): (Arc<dyn MarketProvider>, Option<Arc<dyn Broker>>) =
+        if oanda_token.is_empty() {
+            tracing::info!("no OANDA token — using Deriv for forex data too");
+            (deriv_client.clone() as Arc<dyn MarketProvider>, None)
+        } else {
+            let ob: Arc<dyn Broker> = oanda_client.clone();
+            (oanda_client.clone() as Arc<dyn MarketProvider>, Some(ob))
+        };
 
-    let markets = Arc::new(MarketRegistry::new(oanda, deriv, Some(oanda_broker), Some(deriv_broker)));
+    let deriv: Arc<dyn MarketProvider> = deriv_client.clone();
+    let deriv_broker: Arc<dyn Broker> = deriv_client.clone();
+
+    let markets = Arc::new(MarketRegistry::new(forex_provider, deriv, forex_broker, Some(deriv_broker)));
 
     let state = AppState {
         settings: settings.clone(),

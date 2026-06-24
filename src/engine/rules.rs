@@ -18,6 +18,13 @@ pub struct Indicators {
     pub open: Decimal,
     pub volume: Decimal,
     pub pct_change: Decimal,
+    /// Candlestick pattern signals (1.0 = pattern present, 0.0 = not).
+    pub patterns: HashMap<String, Decimal>,
+    /// Previous candle data for multi-candle patterns.
+    pub prev_open: Decimal,
+    pub prev_close: Decimal,
+    pub prev_high: Decimal,
+    pub prev_low: Decimal,
 }
 
 impl Indicators {
@@ -37,7 +44,8 @@ impl Indicators {
         if closes.len() >= 2 {
             let prev = closes[closes.len() - 2];
             if prev != Decimal::ZERO {
-                ind.pct_change = (last.close - prev) / prev * Decimal::from(100);
+                let pct = (last.close - prev) / prev * Decimal::from(100);
+                ind.pct_change = pct.round_dp(4);
             }
         }
         ind.rsi.insert(14, rsi(&closes, 14).unwrap_or(Decimal::from(50)));
@@ -47,6 +55,18 @@ impl Indicators {
         ind.sma.insert(200, sma(&closes, 200).unwrap_or(last.close));
         ind.atr.insert(14, atr(candles, 14).unwrap_or(Decimal::ZERO));
         ind.macd = Some(macd(&closes));
+
+        // Store previous candle for multi-candle patterns.
+        if candles.len() >= 2 {
+            let prev = &candles[candles.len() - 2];
+            ind.prev_open = prev.open;
+            ind.prev_close = prev.close;
+            ind.prev_high = prev.high;
+            ind.prev_low = prev.low;
+        }
+
+        // Compute candlestick patterns.
+        ind.patterns = detect_patterns(candles);
         Ok(ind)
     }
 
@@ -59,7 +79,11 @@ impl Indicators {
             "volume" => Some(self.volume),
             "pct_change" => Some(self.pct_change),
             "macd" => self.macd,
-            _ => None,
+            "prev_open" => Some(self.prev_open),
+            "prev_close" => Some(self.prev_close),
+            "prev_high" => Some(self.prev_high),
+            "prev_low" => Some(self.prev_low),
+            _ => self.patterns.get(name).copied(),
         }
     }
 }
@@ -67,15 +91,16 @@ impl Indicators {
 fn sma(closes: &[Decimal], period: usize) -> Option<Decimal> {
     if closes.len() < period { return None; }
     let n = Decimal::from(period);
-    Some(closes[closes.len() - period..].iter().sum::<Decimal>() / n)
+    Some((closes[closes.len() - period..].iter().sum::<Decimal>() / n).round_dp(10))
 }
 
 fn ema(closes: &[Decimal], period: usize) -> Option<Decimal> {
     if closes.len() < period { return None; }
     let k = Decimal::from(2) / Decimal::from(period + 1);
+    let k = k.round_dp(10);
     let mut ema = sma(closes, period)?;
     for &c in closes.iter().skip(period) {
-        ema = c * k + ema * (Decimal::ONE - k);
+        ema = (c * k + ema * (Decimal::ONE - k)).round_dp(10);
     }
     Some(ema)
 }
@@ -90,14 +115,14 @@ fn rsi(closes: &[Decimal], period: usize) -> Option<Decimal> {
         if diff > Decimal::ZERO { gains += diff; } else { losses -= diff; }
     }
     let n = Decimal::from(period);
-    let avg_gain = gains / n;
-    let avg_loss = losses / n;
+    let avg_gain = (gains / n).round_dp(10);
+    let avg_loss = (losses / n).round_dp(10);
     if avg_loss == Decimal::ZERO {
         return Some(Decimal::from(100));
     }
-    let rs = avg_gain / avg_loss;
+    let rs = (avg_gain / avg_loss).round_dp(10);
     let hundred = Decimal::from(100);
-    Some(hundred - hundred / (Decimal::ONE + rs))
+    Some((hundred - hundred / (Decimal::ONE + rs)).round_dp(4))
 }
 
 fn atr(candles: &[Candle], period: usize) -> Option<Decimal> {
@@ -111,13 +136,150 @@ fn atr(candles: &[Candle], period: usize) -> Option<Decimal> {
         let tr = h_l.max(h_pc).max(l_pc);
         trs.push(tr);
     }
-    Some(trs.iter().sum::<Decimal>() / Decimal::from(period))
+    Some((trs.iter().sum::<Decimal>() / Decimal::from(period)).round_dp(10))
 }
 
 fn macd(closes: &[Decimal]) -> Decimal {
     let fast = ema(closes, 12).unwrap_or(Decimal::ZERO);
     let slow = ema(closes, 26).unwrap_or(Decimal::ZERO);
-    fast - slow
+    (fast - slow).round_dp(10)
+}
+
+// ---- Candlestick pattern detection ----
+// Based on classic Japanese candlestick analysis. Each pattern returns 1.0
+// (present) or 0.0 (absent). Patterns use the last 1-3 candles.
+
+fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
+    let mut p = HashMap::new();
+    if candles.is_empty() { return p; }
+    let c = &candles[candles.len() - 1];
+    let o = c.open; let h = c.high; let l = c.low; let cl = c.close;
+    let body = ((cl - o).abs()).round_dp(10);
+    let range = ((h - l).abs()).round_dp(10);
+    let upper_shadow = ((h - o.max(cl)).abs()).round_dp(10);
+    let lower_shadow = ((o.min(cl) - l).abs()).round_dp(10);
+    let two = Decimal::from(2);
+
+    // Guard against zero range.
+    if range == Decimal::ZERO {
+        p.insert("doji".into(), Decimal::ONE);
+        return p;
+    }
+
+    let body_pct = (body / range).round_dp(6);
+    let upper_pct = (upper_shadow / range).round_dp(6);
+    let lower_pct = (lower_shadow / range).round_dp(6);
+
+    // Hammer: long lower shadow (2x+ body), small upper shadow.
+    let is_hammer = lower_shadow >= body * two && upper_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
+    p.insert("hammer".into(), bool_dec(is_hammer));
+
+    // Inverted Hammer: long upper shadow, small lower shadow.
+    let is_inv_hammer = upper_shadow >= body * two && lower_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
+    p.insert("inverted_hammer".into(), bool_dec(is_inv_hammer));
+
+    // Doji: body is tiny (<=5% of range).
+    let is_doji = body_pct <= Decimal::new(5, 2);
+    p.insert("doji".into(), bool_dec(is_doji));
+
+    // Dragonfly Doji: doji with long lower shadow (60%+ of range).
+    let is_dragonfly = is_doji && lower_pct >= Decimal::new(60, 2);
+    p.insert("dragonfly_doji".into(), bool_dec(is_dragonfly));
+
+    // Gravestone Doji: doji with long upper shadow.
+    let is_gravestone = is_doji && upper_pct >= Decimal::new(60, 2);
+    p.insert("gravestone_doji".into(), bool_dec(is_gravestone));
+
+    // Bullish/Bearish candle.
+    p.insert("bullish_candle".into(), bool_dec(cl > o));
+    p.insert("bearish_candle".into(), bool_dec(cl < o));
+
+    // Marubozu: body fills 95%+ of range.
+    let is_marubozu = body_pct >= Decimal::new(95, 2);
+    p.insert("marubozu".into(), bool_dec(is_marubozu));
+
+    // Spinning Top: small body (<=30%), long shadows both sides.
+    let is_spinning_top = body_pct <= Decimal::new(30, 2) && upper_shadow > body && lower_shadow > body;
+    p.insert("spinning_top".into(), bool_dec(is_spinning_top));
+
+    // Shooting Star: long upper shadow (2x+ body), small lower shadow.
+    let is_shooting_star = upper_shadow >= body * two && lower_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
+    p.insert("shooting_star".into(), bool_dec(is_shooting_star));
+
+    p.insert("hanging_man".into(), bool_dec(is_hammer));
+
+    // Long shadows (2/3+ of range).
+    p.insert("long_upper_shadow".into(), bool_dec(upper_pct >= Decimal::new(66, 2)));
+    p.insert("long_lower_shadow".into(), bool_dec(lower_pct >= Decimal::new(66, 2)));
+
+    // Two-candle patterns.
+    if candles.len() >= 2 {
+        let prev = &candles[candles.len() - 2];
+        let po = prev.open; let pc = prev.close; let ph = prev.high; let pl = prev.low;
+        let prev_bullish = pc > po;
+        let prev_bearish = pc < po;
+
+        // Bullish Engulfing: prev bearish, curr bullish, curr engulfs prev body.
+        let is_bull_engulf = prev_bearish && cl > o && o <= pc && cl >= po;
+        p.insert("bullish_engulfing".into(), bool_dec(is_bull_engulf));
+
+        // Bearish Engulfing: prev bullish, curr bearish, curr engulfs prev body.
+        let is_bear_engulf = prev_bullish && cl < o && o >= pc && cl <= po;
+        p.insert("bearish_engulfing".into(), bool_dec(is_bear_engulf));
+
+        // Bullish Harami: prev big bearish, curr small bullish inside prev.
+        let prev_body = ((pc - po).abs()).round_dp(10);
+        let is_bull_harami = prev_bearish && prev_body > body * two && cl > o && o >= pc && cl <= po;
+        p.insert("bullish_harami".into(), bool_dec(is_bull_harami));
+
+        // Bearish Harami: prev big bullish, curr small bearish inside prev.
+        let is_bear_harami = prev_bullish && prev_body > body * two && cl < o && o <= pc && cl >= po;
+        p.insert("bearish_harami".into(), bool_dec(is_bear_harami));
+
+        // Piercing Line: prev bearish, curr opens below prev low, closes above prev midpoint.
+        let prev_mid = ((po + pc) / two).round_dp(10);
+        let is_piercing = prev_bearish && o < pl && cl > prev_mid && cl < po;
+        p.insert("piercing_line".into(), bool_dec(is_piercing));
+
+        // Dark Cloud Cover: prev bullish, curr opens above prev high, closes below midpoint.
+        let is_dark_cloud = prev_bullish && o > ph && cl < prev_mid && cl > po;
+        p.insert("dark_cloud_cover".into(), bool_dec(is_dark_cloud));
+
+        // Tweezer Bottom/Top: matching lows/highs (within 1% of range).
+        p.insert("tweezer_bottom".into(), bool_dec(((l - pl).abs() <= range * Decimal::new(1, 2))));
+        p.insert("tweezer_top".into(), bool_dec(((h - ph).abs() <= range * Decimal::new(1, 2))));
+    }
+
+    // Three-candle patterns.
+    if candles.len() >= 3 {
+        let prev2 = &candles[candles.len() - 3];
+        let prev = &candles[candles.len() - 2];
+        let po2 = prev2.open; let pc2 = prev2.close;
+        let po = prev.open; let pc = prev.close;
+
+        // Morning Star: bearish → small body → bullish closing into first body.
+        let prev_mid = ((po2 + pc2) / two).round_dp(10);
+        let is_morning_star = pc2 < po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl > o && cl > prev_mid;
+        p.insert("morning_star".into(), bool_dec(is_morning_star));
+
+        // Evening Star: bullish → small body → bearish closing into first body.
+        let is_evening_star = pc2 > po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl < o && cl < prev_mid;
+        p.insert("evening_star".into(), bool_dec(is_evening_star));
+
+        // Three White Soldiers.
+        let is_three_soldiers = pc2 > po2 && pc > po && cl > o && pc > pc2 && cl > pc;
+        p.insert("three_white_soldiers".into(), bool_dec(is_three_soldiers));
+
+        // Three Black Crows.
+        let is_three_crows = pc2 < po2 && pc < po && cl < o && pc < pc2 && cl < pc;
+        p.insert("three_black_crows".into(), bool_dec(is_three_crows));
+    }
+
+    p
+}
+
+fn bool_dec(b: bool) -> Decimal {
+    if b { Decimal::ONE } else { Decimal::ZERO }
 }
 
 // ---- Mini expression evaluator ----
@@ -382,6 +544,13 @@ fn resolve_fn(name: &str, args: &[Decimal], ind: &Indicators) -> AppResult<Decim
                 Ok(if a > b { Decimal::ONE } else { Decimal::ZERO })
             }
         }
-        _ => Err(AppError::BadRequest(format!("unknown function: {name}"))),
+        // Candlestick patterns can be called as functions too: hammer(), doji(), etc.
+        _ => {
+            if let Some(v) = ind.patterns.get(name) {
+                Ok(*v)
+            } else {
+                Err(AppError::BadRequest(format!("unknown function or pattern: {name}")))
+            }
+        }
     }
 }
