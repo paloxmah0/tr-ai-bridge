@@ -37,6 +37,27 @@ pub struct Indicators {
     /// Recent swing high/low (support/resistance).
     pub swing_high: Decimal,
     pub swing_low: Decimal,
+    /// Multi-bar sequences.
+    pub consecutive_bullish: u32,
+    pub consecutive_bearish: u32,
+    /// Volatility regime: "expanding", "contracting", "stable".
+    pub volatility_regime: String,
+    /// Previous ATR (for regime detection).
+    pub prev_atr: Decimal,
+    /// Bollinger Band width (volatility squeeze detection).
+    pub bb_width: Decimal,
+    /// Bollinger Band width percentile (0-100, where low = squeeze).
+    pub bb_width_pct: Decimal,
+    /// Price position: 0.0 = at lower BB, 1.0 = at upper BB.
+    pub bb_position_pct: Decimal,
+    /// Distance from swing high as % (0 = at swing high, 100 = far from it).
+    pub dist_from_swing_high_pct: Decimal,
+    /// Distance from swing low as % (0 = at swing low, 100 = far from it).
+    pub dist_from_swing_low_pct: Decimal,
+    /// Last 5 candle directions for sequence analysis.
+    pub candle_sequence: Vec<String>,
+    /// Rate of change (5-bar momentum).
+    pub roc_5: Decimal,
 }
 
 impl Indicators {
@@ -98,6 +119,69 @@ impl Indicators {
         let lookback = candles.len().min(20);
         ind.swing_high = candles[candles.len() - lookback..].iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
         ind.swing_low = candles[candles.len() - lookback..].iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+
+        // Multi-bar sequences: count consecutive bullish/bearish candles.
+        ind.candle_sequence = candles.iter().rev().take(5).rev().map(|c| {
+            if c.close > c.open { "bullish".into() }
+            else if c.close < c.open { "bearish".into() }
+            else { "neutral".into() }
+        }).collect();
+        ind.consecutive_bullish = 0;
+        ind.consecutive_bearish = 0;
+        for c in candles.iter().rev() {
+            if c.close > c.open { ind.consecutive_bullish += 1; } else { break; }
+        }
+        for c in candles.iter().rev() {
+            if c.close < c.open { ind.consecutive_bearish += 1; } else { break; }
+        }
+
+        // Volatility regime: compare current ATR to previous ATR.
+        let cur_atr = ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO);
+        let prev_atr = if candles.len() > 28 {
+            atr(&candles[..candles.len() - 14], 14).unwrap_or(cur_atr)
+        } else { cur_atr };
+        ind.prev_atr = prev_atr;
+        ind.volatility_regime = if cur_atr > prev_atr * Decimal::from(12) / Decimal::from(10) {
+            "expanding".into()
+        } else if cur_atr < prev_atr * Decimal::from(8) / Decimal::from(10) {
+            "contracting".into()
+        } else {
+            "stable".into()
+        };
+
+        // Bollinger Band width + percentile.
+        let bb_width = (ind.bb_upper - ind.bb_lower).round_dp(6);
+        ind.bb_width = bb_width;
+        // Compute BB width over last 50 candles to get percentile.
+        let mut bb_widths: Vec<Decimal> = Vec::new();
+        for i in (20..=closes.len()).rev() {
+            let (u, _, l) = bollinger_bands(&closes[i-20..i], 20);
+            bb_widths.push((u - l).round_dp(6));
+        }
+        if !bb_widths.is_empty() && bb_width > Decimal::ZERO {
+            let below = bb_widths.iter().filter(|w| **w < bb_width).count();
+            ind.bb_width_pct = Decimal::from(below) / Decimal::from(bb_widths.len()) * Decimal::from(100);
+        }
+        // BB position % (0 = lower band, 1 = upper band).
+        let bb_range = ind.bb_upper - ind.bb_lower;
+        ind.bb_position_pct = if bb_range != Decimal::ZERO {
+            ((ind.price - ind.bb_lower) / bb_range * Decimal::from(100)).round_dp(2)
+        } else { Decimal::from(50) };
+
+        // Distance from swing levels.
+        let range = ind.swing_high - ind.swing_low;
+        if range > Decimal::ZERO {
+            ind.dist_from_swing_high_pct = ((ind.swing_high - ind.price) / range * Decimal::from(100)).round_dp(2);
+            ind.dist_from_swing_low_pct = ((ind.price - ind.swing_low) / range * Decimal::from(100)).round_dp(2);
+        }
+
+        // Rate of change (5-bar).
+        if closes.len() >= 6 {
+            let past = closes[closes.len() - 6];
+            if past != Decimal::ZERO {
+                ind.roc_5 = ((last.close - past) / past * Decimal::from(100)).round_dp(4);
+            }
+        }
 
         Ok(ind)
     }

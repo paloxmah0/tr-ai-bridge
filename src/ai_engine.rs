@@ -349,6 +349,81 @@ pub async fn analyze(
         }
     }
 
+    // Multi-bar pattern sequences (consecutive runs → exhaustion/reversal).
+    if ind.consecutive_bullish >= 4 {
+        let w = Decimal::from(2);
+        factors.push(SignalFactor { source: "sequence".into(), name: "Bullish Exhaustion".into(), direction: "bearish".into(), weight: w, detail: format!("{} consecutive bullish candles — buying exhaustion likely, expect bearish pullback.", ind.consecutive_bullish) });
+        bear += w;
+    }
+    if ind.consecutive_bearish >= 4 {
+        let w = Decimal::from(2);
+        factors.push(SignalFactor { source: "sequence".into(), name: "Bearish Exhaustion".into(), direction: "bullish".into(), weight: w, detail: format!("{} consecutive bearish candles — selling exhaustion likely, expect bullish bounce.", ind.consecutive_bearish) });
+        bull += w;
+    }
+
+    // Volatility regime detection.
+    {
+        let detail = format!("Volatility is {} (ATR {} vs prev {}).", ind.volatility_regime, ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO), ind.prev_atr);
+        if ind.volatility_regime == "contracting" && ind.bb_width_pct < Decimal::from(20) {
+            // Squeeze — breakout imminent. Direction unknown but momentum will be strong.
+            factors.push(SignalFactor { source: "volatility".into(), name: "BB Squeeze".into(), direction: "neutral".into(), weight: Decimal::ZERO, detail: format!("{} Bollinger Band squeeze (width percentile {}) — breakout imminent. Wait for direction.", detail, ind.bb_width_pct) });
+        } else if ind.volatility_regime == "expanding" {
+            factors.push(SignalFactor { source: "volatility".into(), name: "Volatility Expansion".into(), direction: "neutral".into(), weight: Decimal::ZERO, detail: format!("{} — trends are strong, follow the dominant direction.", detail) });
+        }
+    }
+
+    // Price action: support/resistance proximity.
+    {
+        // Near swing low (support) → bullish bounce likely.
+        if ind.dist_from_swing_low_pct < Decimal::from(10) {
+            let w = Decimal::from(2);
+            factors.push(SignalFactor { source: "price_action".into(), name: "At Support".into(), direction: "bullish".into(), weight: w, detail: format!("Price near swing low ({}% from support) — bullish bounce likely.", ind.dist_from_swing_low_pct) });
+            bull += w;
+        }
+        // Near swing high (resistance) → bearish rejection likely.
+        if ind.dist_from_swing_high_pct < Decimal::from(10) {
+            let w = Decimal::from(2);
+            factors.push(SignalFactor { source: "price_action".into(), name: "At Resistance".into(), direction: "bearish".into(), weight: w, detail: format!("Price near swing high ({}% from resistance) — bearish rejection likely.", ind.dist_from_swing_high_pct) });
+            bear += w;
+        }
+    }
+
+    // Rate of change (5-bar momentum).
+    {
+        let roc = ind.roc_5;
+        if roc > Decimal::from(2) {
+            let w = Decimal::from(1);
+            factors.push(SignalFactor { source: "momentum".into(), name: "ROC(5)".into(), direction: "bullish".into(), weight: w, detail: format!("5-bar ROC +{}% — strong upward momentum.", roc) });
+            bull += w;
+        } else if roc < Decimal::from(-2) {
+            let w = Decimal::from(1);
+            factors.push(SignalFactor { source: "momentum".into(), name: "ROC(5)".into(), direction: "bearish".into(), weight: w, detail: format!("5-bar ROC {}% — strong downward momentum.", roc) });
+            bear += w;
+        }
+    }
+
+    // Confluence bonus: when 3+ independent sources agree, boost confidence.
+    {
+        let bull_sources: std::collections::HashSet<String> = factors.iter()
+            .filter(|f| f.direction == "bullish" && f.weight > Decimal::ZERO)
+            .map(|f| f.source.clone()).collect();
+        let bear_sources: std::collections::HashSet<String> = factors.iter()
+            .filter(|f| f.direction == "bearish" && f.weight > Decimal::ZERO)
+            .map(|f| f.source.clone()).collect();
+        let bull_count = bull_sources.len();
+        let bear_count = bear_sources.len();
+        if bull_count >= 4 {
+            let w = Decimal::from(3);
+            factors.push(SignalFactor { source: "confluence".into(), name: "Multi-Source Confluence".into(), direction: "bullish".into(), weight: w, detail: format!("{} independent sources agree on bullish — high-conviction signal.", bull_count) });
+            bull += w;
+        }
+        if bear_count >= 4 {
+            let w = Decimal::from(3);
+            factors.push(SignalFactor { source: "confluence".into(), name: "Multi-Source Confluence".into(), direction: "bearish".into(), weight: w, detail: format!("{} independent sources agree on bearish — high-conviction signal.", bear_count) });
+            bear += w;
+        }
+    }
+
     // Upper timeframe context as evidence.
     if upper_bull > upper_bear {
         let w = Decimal::from(3);
@@ -376,6 +451,32 @@ pub async fn analyze(
                 factors.push(SignalFactor { source: "note".into(), name: format!("{} ({})", rule.name, strat.name), direction: ds.into(), weight: w, detail: format!("Learned rule: {}", rule.expr) });
                 if ds == "bullish" { bull += w; } else { bear += w; }
                 note_count += 1;
+            }
+        }
+    }
+
+    // Self-learning: analyze past trades on this symbol to learn what works.
+    let past_trades = db.list_trades_by_symbol(symbol).await.unwrap_or_default();
+    if past_trades.len() >= 5 {
+        let wins = past_trades.iter().filter(|t| t.pnl.map(|p| p > Decimal::ZERO).unwrap_or(false)).count();
+        let losses = past_trades.iter().filter(|t| t.pnl.map(|p| p <= Decimal::ZERO).unwrap_or(false)).count();
+        let win_rate = Decimal::from(wins) / Decimal::from(past_trades.len());
+        if wins + losses > 0 {
+            let detail = format!("Learned from {} past trades on {}: {} wins, {} losses ({}% win rate). Adjusting confidence accordingly.", past_trades.len(), symbol, wins, losses, win_rate * Decimal::from(100));
+            // If historical win rate is high, boost the dominant direction.
+            if win_rate > Decimal::new(60, 2) {
+                if bull > bear {
+                    let w = Decimal::from(2);
+                    factors.push(SignalFactor { source: "self_learning".into(), name: "Trade History".into(), direction: "bullish".into(), weight: w, detail: format!("{} Past performance favors BUY on this symbol.", detail) });
+                    bull += w;
+                } else if bear > bull {
+                    let w = Decimal::from(2);
+                    factors.push(SignalFactor { source: "self_learning".into(), name: "Trade History".into(), direction: "bearish".into(), weight: w, detail: format!("{} Past performance favors SELL on this symbol.", detail) });
+                    bear += w;
+                }
+            } else if win_rate < Decimal::new(40, 2) {
+                // Low win rate — add caution factor.
+                factors.push(SignalFactor { source: "self_learning".into(), name: "Trade History Warning".into(), direction: "neutral".into(), weight: Decimal::ZERO, detail: format!("{} Past performance is poor — reduce position size.", detail) });
             }
         }
     }

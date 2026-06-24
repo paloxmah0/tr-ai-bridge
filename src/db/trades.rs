@@ -106,6 +106,19 @@ impl Db {
         .await?;
         Ok(rows.iter().map(map_trade).collect())
     }
+
+    /// List closed trades for a specific symbol (used by self-learning).
+    pub async fn list_trades_by_symbol(&self, symbol: &str) -> AppResult<Vec<Trade>> {
+        let rows = sqlx::query(
+            r#"SELECT id, account_id, strategy_id, signal_id, symbol, side, order_type, mode,
+                      size, entry_price, exit_price, stop_loss, take_profit, pnl, status, opened_at, closed_at
+               FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY opened_at DESC LIMIT 50"#,
+        )
+        .bind(symbol)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_trade).collect())
+    }
 }
 
 fn map_signal(row: &sqlx::sqlite::SqliteRow) -> Signal {
