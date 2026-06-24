@@ -144,6 +144,8 @@ export interface Prediction {
   expiry: string; reasoning: string; signals: SignalFactor[];
   timeframe_secs: number; symbol: string;
   analysis_time_utc: string; market_session: string; scientific_basis: string;
+  current_candle_start: string; next_candle_start: string;
+  seconds_to_next_candle: number; countdown: string;
   recent_candles: CandleSummary[];
   upper_timeframe_context: UpperTFContext[];
 }

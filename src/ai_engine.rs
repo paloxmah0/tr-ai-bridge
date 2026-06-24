@@ -44,6 +44,14 @@ pub struct Prediction {
     pub analysis_time_utc: chrono::DateTime<chrono::Utc>,
     pub market_session: String,
     pub scientific_basis: String,
+    /// When the current candle started (UTC).
+    pub current_candle_start: chrono::DateTime<chrono::Utc>,
+    /// When the next candle starts (UTC).
+    pub next_candle_start: chrono::DateTime<chrono::Utc>,
+    /// Seconds remaining until the next candle begins.
+    pub seconds_to_next_candle: i64,
+    /// Human-readable countdown (e.g. "3m 42s").
+    pub countdown: String,
     /// The last 5 candles on the chart (what just happened)
     pub recent_candles: Vec<CandleSummary>,
     /// What the upper timeframes say (context)
@@ -446,6 +454,14 @@ pub async fn analyze(
         format!("{}\n\nAI Insight: {}", reasoning, insight)
     } else { reasoning };
 
+    // 12. Compute time remaining until the next candle starts.
+    // The last candle's timestamp tells us when the current candle began.
+    // Next candle starts at last_candle.ts + tf_secs.
+    let last_candle_ts = candles.last().unwrap().ts;
+    let next_candle_start = last_candle_ts + Duration::seconds(tf_secs as i64);
+    let secs_remaining = (next_candle_start - now).num_seconds().max(0);
+    let countdown = format_coundown(secs_remaining);
+
     Ok(Prediction {
         next_candle_direction: next_dir,
         confidence,
@@ -465,9 +481,21 @@ pub async fn analyze(
         analysis_time_utc: now,
         market_session: session,
         scientific_basis,
+        current_candle_start: last_candle_ts,
+        next_candle_start,
+        seconds_to_next_candle: secs_remaining,
+        countdown,
         recent_candles: recent,
         upper_timeframe_context: upper_context,
     })
+}
+
+/// Format seconds as "Xm Ys" or "Xs".
+fn format_coundown(secs: i64) -> String {
+    if secs <= 0 { return "0s".into(); }
+    let m = secs / 60;
+    let s = secs % 60;
+    if m > 0 { format!("{}m {}s", m, s) } else { format!("{}s", s) }
 }
 
 // ─── Reasoning ───

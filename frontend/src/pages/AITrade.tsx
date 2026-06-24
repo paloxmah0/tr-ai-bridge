@@ -93,11 +93,15 @@ export default function AITrade() {
 
       {prediction && (
         <div className="space-y-4">
-          {/* Time + session */}
+          {/* Time + session + countdown */}
           <div className="card flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5 text-muted"><Clock size={14} /><span className="font-mono text-xs">{fmtUTC(prediction.analysis_time_utc)}</span></div>
               <div className="flex items-center gap-1.5 text-accent"><Globe size={14} />{prediction.market_session}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Next candle in:</span>
+              <span className="font-mono text-sm font-bold text-warn bg-warn/10 px-2 py-0.5 rounded">{prediction.countdown}</span>
             </div>
           </div>
 
@@ -111,6 +115,9 @@ export default function AITrade() {
               </div>
               <div className={`text-5xl font-bold ${dirColor} mb-2`}>{fmtPct(prediction.confidence)}</div>
               <div className="text-xs text-muted">confidence</div>
+              <div className="mt-3 text-xs text-muted">
+                Next candle starts in <span className="font-mono font-bold text-warn">{prediction.countdown}</span>
+              </div>
             </div>
             {/* Projected OHLC */}
             <div className="grid grid-cols-4 gap-2 mt-4 pt-4 border-t border-ink-700 text-center">
