@@ -1,3 +1,4 @@
+mod ai_engine;
 mod analytics;
 mod api;
 mod backtest;

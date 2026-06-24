@@ -6,6 +6,7 @@ use axum::{
 use crate::state::AppState;
 
 pub mod accounts;
+pub mod ai_trade;
 pub mod analytics;
 pub mod backtest;
 pub mod notes;
@@ -19,7 +20,6 @@ pub fn router(state: AppState) -> Router {
     let api = api_router(state);
 
     Router::new()
-        .route("/api/health", get(|| async { "ok" }))
         .nest_service("/api", api)
         .fallback(spa_fallback)
 }
@@ -76,6 +76,9 @@ fn mime_for(path: &str) -> &'static str {
 fn api_router(state: AppState) -> Router<()> {
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        // AI trade — user picks market + timeframe, app predicts and trades
+        .route("/analyze", post(ai_trade::analyze))
+        .route("/trade", post(ai_trade::place_trade))
         // settings
         .route("/settings", get(settings::get).put(settings::update))
         .route("/settings/test", post(settings::test))

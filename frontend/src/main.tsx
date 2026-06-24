@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 import Layout from "./pages/Layout";
+import AITrade from "./pages/AITrade";
 import Accounts from "./pages/Accounts";
 import Strategies from "./pages/Strategies";
 import Notes from "./pages/Notes";
@@ -16,7 +17,7 @@ createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Accounts />} />
+          <Route index element={<AITrade />} />
           <Route path="accounts/:id" element={<Accounts />} />
           <Route path="strategies" element={<Strategies />} />
           <Route path="notes" element={<Notes />} />

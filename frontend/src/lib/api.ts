@@ -118,4 +118,19 @@ export const api = {
     req<{ updated: string[] }>(`/settings`, { method: "PUT", body: JSON.stringify(values) }),
   testService: (service: string) =>
     req<{ ok: boolean; message: string }>(`/settings/test`, { method: "POST", body: JSON.stringify({ service }) }),
+
+  // AI trade
+  analyze: (symbol: string, timeframe_minutes: number, asset_class?: string) =>
+    req<Prediction>(`/analyze`, { method: "POST", body: JSON.stringify({ symbol, timeframe_minutes, asset_class }) }),
+  placeTrade: (symbol: string, direction: string, timeframe_minutes: number, stake?: number, asset_class?: string) =>
+    req<any>(`/trade`, { method: "POST", body: JSON.stringify({ symbol, direction, timeframe_minutes, stake, asset_class }) }),
 };
+
+export interface SignalFactor {
+  source: string; name: string; direction: string; weight: number; detail: string;
+}
+export interface Prediction {
+  direction: string; confidence: number; entry_price: number; stop_loss: number;
+  take_profit: number; expiry: string; reasoning: string; signals: SignalFactor[];
+  timeframe_secs: number; symbol: string;
+}
