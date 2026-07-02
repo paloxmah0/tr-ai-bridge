@@ -780,53 +780,40 @@ pub async fn analyze(
     let prev_c = candles.len().ge(&2).then(|| &candles[candles.len() - 2]);
     let prior_swing_high_tg = candles.iter().rev().skip(1).take(50).map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
     let prior_swing_low_tg = candles.iter().rev().skip(1).take(50).map(|c| c.low).fold(Decimal::MAX, Decimal::min);
-    let trigger_fired = if direction == "wait" { false } else {
-        let c = last;
-        match direction.as_str() {
-            "buy" => {
-                let broke_prior_high = prev_c.map_or(false, |p| c.close > p.high);
-                let candle_confirms = c.close > c.open; // bullish candle
-                let broke_swing = prior_swing_high_tg > Decimal::ZERO && c.close > prior_swing_high_tg;
-                // Require BOTH a breakout/reversal AND a bullish candle.
-                (broke_prior_high || broke_swing || has_bull_reversal_candle) && candle_confirms
-            }
-            "sell" => {
-                let broke_prior_low = prev_c.map_or(false, |p| c.close < p.low);
-                let candle_confirms = c.close < c.open; // bearish candle
-                let broke_swing = prior_swing_low_tg < Decimal::MAX && c.close < prior_swing_low_tg;
-                (broke_prior_low || broke_swing || has_bear_reversal_candle) && candle_confirms
-            }
-            _ => false,
-        }
-    };
-    let direction = if !trigger_fired && direction != "wait" {
-        evidence.push(Evidence { source: "trigger".into(),
-            finding: format!("TRIGGER GATE: setup valid but trigger not fired. Latest candle hasn't broken prior bar's range. WAIT for the candle to confirm the move."),
-            confirms: "neutral".into(), weight: Decimal::ZERO });
-        "wait".to_string()
-    } else { direction };
+    // No trigger gate — the conviction score + pattern check is the filter.
+    // The trigger gate was blocking valid signals and causing missed trades.
+    let trigger_fired = true; // always pass — conviction is the real filter
 
     // ═══ ENTRY CHECKLIST ═══
     let session_active = now.hour() >= 7 && now.hour() <= 21;
     let trend_aligned = direction != "wait" && (trend_dir == direction || trend_dir == "neutral");
     let momentum_aligned = direction != "wait" && (momentum_dir == direction || momentum_dir == "neutral");
-    let pattern_confirmed = direction != "wait" && (pattern_dir == direction || ind.consecutive_bearish >= 3 || ind.consecutive_bullish >= 3);
+    // Pattern confirmed: a candlestick pattern aligns, OR consecutive candles
+    // show exhaustion (3+ same direction), OR a reversal candle printed.
+    let pattern_confirmed = direction != "wait" && (pattern_dir == direction || ind.consecutive_bearish >= 3 || ind.consecutive_bullish >= 3 || has_bull_reversal_candle || has_bear_reversal_candle);
     let no_news_risk = news.status != "danger";
     let risk_reward_ok = tp_dist >= sl_dist * Decimal::from(2);
     let conviction_ok = direction != "wait" && evidence_score >= conviction_threshold;
-    let ready = trigger_fired && trend_aligned && momentum_aligned && pattern_confirmed
-        && conviction_ok && no_news_risk && risk_reward_ok && direction != "wait";
+    // ALL conditions must be YES — no exceptions.
+    let ready = direction != "wait"
+        && conviction_ok
+        && trend_aligned
+        && momentum_aligned
+        && pattern_confirmed
+        && no_news_risk
+        && risk_reward_ok
+        && session_active;
 
     let mut checklist_details = Vec::new();
-    checklist_details.push(format!("1. Trend aligned: {} — price structure and EMA agree with {}", if trend_aligned { "YES" } else { "NO" }, direction));
-    checklist_details.push(format!("2. Momentum aligned: {} — RSI/MACD agree with {}", if momentum_aligned { "YES" } else { "NO" }, direction));
-    checklist_details.push(format!("3. Pattern confirmed: {} — candlestick pattern or exhaustion present", if pattern_confirmed { "YES" } else { "NO" }));
-    checklist_details.push(format!("4. Conviction: {} — score {:.0}% (bar {:.0}%)", if conviction_ok { "YES" } else { "NO" }, evidence_score * Decimal::from(100), conviction_threshold * Decimal::from(100)));
+    checklist_details.push(format!("1. Trend aligned: {}", if trend_aligned { "YES" } else { "NO" }));
+    checklist_details.push(format!("2. Momentum aligned: {}", if momentum_aligned { "YES" } else { "NO" }));
+    checklist_details.push(format!("3. Pattern confirmed: {}", if pattern_confirmed { "YES" } else { "NO" }));
+    checklist_details.push(format!("4. Conviction: {} ({:.0}%, bar {:.0}%)", if conviction_ok { "YES" } else { "NO" }, evidence_score * Decimal::from(100), conviction_threshold * Decimal::from(100)));
     checklist_details.push(format!("5. No news risk: {}", if no_news_risk { "YES" } else { "NO" }));
     checklist_details.push(format!("6. Risk/reward: {}", if risk_reward_ok { "YES" } else { "NO" }));
-    checklist_details.push(format!("7. Trigger fired: {}", if trigger_fired { "YES" } else { "NO — WAIT" }));
+    checklist_details.push(format!("7. Session active: {}", if session_active { "YES" } else { "NO" }));
     if ready { checklist_details.push("ALL CONDITIONS MET — trade is valid.".into()); }
-    else { checklist_details.push("NOT ALL CONDITIONS MET — do not trade or reduce risk.".into()); }
+    else { checklist_details.push("NOT ALL CONDITIONS MET — do not trade.".into()); }
 
     // What to watch.
     let mut what_to_watch: Vec<String> = Vec::new();

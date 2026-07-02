@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { Prediction, Evidence, Account } from "../lib/api";
 import { fmt, fmtPct } from "../lib/fmt";
-import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Clock, Globe, Target, Activity, BarChart3, Eye, Layers, Wallet } from "lucide-react";
+import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Clock, Globe, Target, Activity, BarChart3, Eye, Layers, Wallet, AlertTriangle } from "lucide-react";
 
 const TV_SYMBOLS: Record<string, string> = {
   "R_100": "DERIV:VOLATILITY_100_INDEX",
@@ -53,25 +53,117 @@ export default function AITrade() {
   const [account, setAccount] = useState<Account | null>(null);
   const [stake, setStake] = useState("10");
   const [recentTrades, setRecentTrades] = useState<any[]>([]);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [staleWarning, setStaleWarning] = useState(false);
+  const [refreshCountdown, setRefreshCountdown] = useState(10);
+  const [confirmCount, setConfirmCount] = useState(0);
+  const confirmCountRef = useRef(0);
+  const lastCandleStartRef = useRef<string>("");
+
+  // Triple beep for 3-confirmation alert
+  const playTripleBeep = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      [0, 0.3, 0.6].forEach((delay, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = i === 2 ? 1100 : 880;
+        osc.type = "sine";
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.2);
+        osc.start(ctx.currentTime + delay);
+        osc.stop(ctx.currentTime + delay + 0.2);
+      });
+    } catch (e) {}
+  };
 
   // Auto-load account on mount
   useEffect(() => {
     api.listAccounts().then(accs => {
       if (accs.length > 0) {
         setAccount(accs[0]);
-        api.listTrades(accs[0].id).then(trades => {
-          setRecentTrades(trades.slice(0, 5));
-        }).catch(() => {});
+        api.listTrades(accs[0].id).then(trades => setRecentTrades(trades.slice(0, 5))).catch(() => {});
       }
     }).catch(() => {});
   }, []);
 
+  // Request notification permission
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
   async function runAnalysis() {
-    setAnalyzing(true); setError(""); setPrediction(null); setTradeResult(null);
+    setAnalyzing(true); setError(""); setStaleWarning(false);
     const m = MARKETS.find(m => m.symbol === symbol);
-    try { setPrediction(await api.analyze(symbol, timeframe, m?.class)); }
-    catch (e: any) { setError(e.message); } finally { setAnalyzing(false); }
+    try {
+      const pred = await api.analyze(symbol, timeframe, m?.class);
+      setPrediction(pred);
+      setTradeResult(null);
+      const dir = pred.direction;
+      const conviction = pred.evidence_score ? Number(pred.evidence_score) : 0;
+      const hasSignal = (dir === "buy" || dir === "sell") && conviction >= 0.55;
+
+      // ONLY count ONE confirmation per candle — at candle close.
+      // Track the candle start time. If it's the same candle as last time,
+      // don't count again (prevents multiple beeps mid-candle).
+      // A new candle = new candle_start timestamp = count once.
+      const candleStart = pred.current_candle_start || "";
+      const isNewCandle = candleStart !== lastCandleStartRef.current;
+      lastCandleStartRef.current = candleStart;
+
+      if (hasSignal && isNewCandle) {
+        confirmCountRef.current += 1;
+        setConfirmCount(confirmCountRef.current);
+        if (confirmCountRef.current === 3) {
+          // Exactly 3/3 — beep and notify. Then reset so it doesn't go 4/3.
+          playTripleBeep();
+          try {
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification(`3/3 CONFIRMED: ${dir.toUpperCase()} on ${pred.symbol}`, {
+                body: `3 consecutive candle closes. Conviction: ${(conviction * 100).toFixed(1)}%. Enter NOW for 5 min.`,
+              });
+            }
+          } catch (e) {}
+        } else if (confirmCountRef.current > 3) {
+          // Reset after 3 — don't keep counting.
+          confirmCountRef.current = 0;
+          setConfirmCount(0);
+        }
+      } else if (!hasSignal && isNewCandle) {
+        confirmCountRef.current = 0;
+        setConfirmCount(0);
+      }
+    } catch (e: any) { setError(e.message); } finally { setAnalyzing(false); }
   }
+
+  // Auto-refresh every 10 seconds
+  useEffect(() => {
+    if (!autoRefresh) return;
+    runAnalysis();
+    setRefreshCountdown(10);
+    const interval = setInterval(() => { runAnalysis(); setRefreshCountdown(10); }, 10000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, symbol, timeframe]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = setInterval(() => { setRefreshCountdown(c => c > 0 ? c - 1 : 10); }, 1000);
+    return () => clearInterval(timer);
+  }, [autoRefresh]);
+
+  // Stale warning
+  useEffect(() => {
+    if (!prediction) return;
+    const checkStale = setInterval(() => {
+      const ageMs = Date.now() - new Date(prediction.analysis_time_utc).getTime();
+      setStaleWarning(ageMs > 30000);
+    }, 5000);
+    return () => clearInterval(checkStale);
+  }, [prediction]);
 
   async function placeTrade() {
     if (!prediction || prediction.direction === "wait") return;
@@ -167,13 +259,47 @@ export default function AITrade() {
             <div className="label mb-1">Stake (USD)</div>
             <input className="input w-full" type="number" value={stake} onChange={e => setStake(e.target.value)} />
           </div>
-          <div className="flex items-end">
-            <button onClick={runAnalysis} disabled={analyzing} className="btn-primary w-full text-base py-2.5">
+          <div className="flex items-end gap-2">
+            <button onClick={runAnalysis} disabled={analyzing} className="btn-primary flex-1 text-base py-2.5">
               {analyzing ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Reading market…</> : <><Brain size={18} className="inline mr-2" />Read Market</>}
+            </button>
+            <button onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`btn text-xs px-3 py-2.5 ${autoRefresh ? "bg-ok/20 text-ok border-ok/40" : "bg-ink-700 text-gray-400"}`}
+              title="Auto-refresh every 10 seconds">
+              {autoRefresh ? `AUTO ${refreshCountdown}s` : "AUTO OFF"}
             </button>
           </div>
         </div>
       </div>
+
+      {staleWarning && prediction && (
+        <div className="card border-warn/50 text-warn text-sm mb-4 flex items-center gap-2">
+          <AlertTriangle size={16} className="animate-pulse" />
+          <span>STALE — data older than 30s. {autoRefresh ? "Refreshing…" : "Click Read Market."}</span>
+        </div>
+      )}
+
+      {prediction && prediction.direction !== "wait" && (
+        <div className="card mb-4 flex items-center justify-between text-sm">
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-1.5 ${prediction.entry_checklist?.ready ? "text-ok" : "text-muted"}`}>
+              {prediction.entry_checklist?.ready ? <Zap size={14} /> : <Clock size={14} />}
+              <span>{prediction.entry_checklist?.ready ? "CONFIRMED" : "Waiting…"}</span>
+            </div>
+            {confirmCount > 0 && (
+              <span className={`badge ${confirmCount >= 3 ? "bg-ok/20 text-ok animate-pulse" : "bg-warn/20 text-warn"}`}>
+                {confirmCount}/3 {confirmCount >= 3 ? "✓ READY" : "candle-close confirmations"}
+              </span>
+            )}
+            {prediction.seconds_to_next_candle != null && prediction.seconds_to_next_candle > (timeframe * 60 - 15) && (
+              <span className="badge bg-accent/20 text-accent">
+                <Clock size={10} className="inline mr-1" />CANDLE JUST CLOSED — enter now
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted">Next candle: {prediction.countdown}</span>
+        </div>
+      )}
 
       {prediction && (
         <div className="space-y-4">
