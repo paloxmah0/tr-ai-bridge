@@ -38,8 +38,22 @@
 ## File Locations
 - Backend source: `src/`
 - AI engine (MTF+patterns+notes): `src/ai_engine.rs`
+- News module (Forex Factory calendar): `src/news.rs` — blocks trades during high-impact news
 - Learning loop (win/loss memories): `src/learning.rs`
 - Rule DSL evaluator: `src/engine/rules.rs`
 - Backtest harness: `src/backtest.rs`
 - MT5 bridge: `mt5_bridge_v2.py` (root) and `opencode-scripts/mt5_bridge_v2.py`
 - Rise/Fall testers: `risefall.py`, `risefall2.py`, `mr_r75.py`, `mtf2.py`
+- Status check: `status_check.py` — run `python status_check.py` to see current state
+
+## How to Check Status in a New Session
+
+Run: `python status_check.py` — shows backend status, MT5 account balance/open positions, 24h trade history (wins/losses/PnL), and last bridge log lines.
+
+## News Handling (Already Built In)
+The app fetches the free Forex Factory calendar (`nfs.faireconomy.media/ff_calendar_thisweek.json`) every analysis cycle:
+- **High-impact news imminent (30 min)** → status="danger" → trade BLOCKED (checklist fails)
+- **Medium-impact news** → status="caution" → conviction reduced 20%
+- **No news** → status="clear" → normal trading
+- Filters by currency: EURUSD → EUR + USD events only
+- No API key needed — Forex Factory calendar is free JSON
