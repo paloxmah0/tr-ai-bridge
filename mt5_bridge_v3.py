@@ -14,13 +14,14 @@ APP = "http://localhost:8080"
 SYMBOL = "GBPUSD"
 APP_SYMBOL = "frxGBPUSD"
 TF_MINUTES = 5
-MIN_LOT = 0.01
+MIN_LOT = 0.05
 SL_PIPS = 20
 TP_PIPS = 10
 RISK_PERCENT = 0.01
 MAGIC = 20260703
 POLL_ANALYZE = 30
 ACCOUNT_ID = None
+MAX_POSITIONS = 3  # allow up to 3 concurrent positions
 
 # Fix #4: Per-symbol conviction threshold
 # GBPUSD RSI reversal backtest: 68.2% win rate. Threshold at 55% is enough.
@@ -52,15 +53,7 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 def calc_lot():
-    if not mt5.initialize():
-        return MIN_LOT
-    a = mt5.account_info()
-    if not a:
-        return MIN_LOT
-    risk_amount = a.balance * RISK_PERCENT
-    lot = risk_amount / (SL_PIPS * 10)
-    lot = max(MIN_LOT, round(lot, 2))
-    return lot
+    return MIN_LOT  # fixed lot for testing
 
 # ═══════════════════════════════════════════════════════
 # Fix #5: Breakeven trailing stop
@@ -268,7 +261,7 @@ def main():
     log(f"FIX 3: loss memories are STRONG (critical weight)")
     log(f"FIX 4: conviction threshold={CONVICTION_THRESHOLD:.0%} (per-symbol tuned)")
     log(f"FIX 5: breakeven trailing stop at +{BE_TRIGGER_PIPS} pips")
-    log(f"  lot=auto(1%) SL={SL_PIPS}pips TP={TP_PIPS}pips poll={POLL_ANALYZE}s")
+    log(f"  lot={MIN_LOT} SL={SL_PIPS}pips TP={TP_PIPS}pips poll={POLL_ANALYZE}s max_pos={MAX_POSITIONS}")
 
     accs = app_get("/api/accounts") or []
     if accs:
@@ -296,15 +289,17 @@ def main():
                         feed_win_memory(side, profit, conditions)
                     last_trade_ticket = None
 
-            # Check open positions — if any, wait
+            # Check open positions — allow up to MAX_POSITIONS
             open_pos = mt5_open_positions()
-            if open_pos:
+            if len(open_pos) >= MAX_POSITIONS:
                 if cycle % 10 == 0:
                     p = open_pos[0]
                     side = 'buy' if p.type==0 else 'sell'
-                    log(f"[wait] {len(open_pos)} {SYMBOL} position open ({side} profit={p.profit:.2f})")
+                    log(f"[wait] {len(open_pos)}/{MAX_POSITIONS} positions open ({side} profit={p.profit:.2f})")
                 time.sleep(POLL_ANALYZE)
                 continue
+            elif open_pos and cycle % 10 == 0:
+                log(f"[multi] {len(open_pos)}/{MAX_POSITIONS} positions open, looking for more signals...")
 
             # Ask AI to analyze
             analysis = app_post("/api/analyze", {
