@@ -53,7 +53,30 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 def calc_lot():
-    return MIN_LOT  # fixed lot for testing
+    """Lot size by balance tiers:
+    <$500: 0.05 | $500-$1000: 0.08 | >$1000: 0.10"""
+    if not mt5.initialize():
+        return 0.05
+    a = mt5.account_info()
+    if not a:
+        return 0.05
+    if a.balance >= 1000:
+        return 0.10
+    elif a.balance >= 500:
+        return 0.08
+    else:
+        return 0.05
+
+def calc_max_positions():
+    """Max positions by balance: $300=3, $400=4, $500=5, etc.
+    Formula: balance / 100, capped at 10."""
+    if not mt5.initialize():
+        return 3
+    a = mt5.account_info()
+    if not a:
+        return 3
+    max_pos = int(a.balance / 100)
+    return max(1, min(max_pos, 10))  # min 1, max 10
 
 # ═══════════════════════════════════════════════════════
 # Fix #5: Breakeven trailing stop
@@ -289,17 +312,19 @@ def main():
                         feed_win_memory(side, profit, conditions)
                     last_trade_ticket = None
 
-            # Check open positions — allow up to MAX_POSITIONS
+            # Check open positions — allow up to dynamic max
+            max_pos = calc_max_positions()
+            lot = calc_lot()
             open_pos = mt5_open_positions()
-            if len(open_pos) >= MAX_POSITIONS:
+            if len(open_pos) >= max_pos:
                 if cycle % 10 == 0:
                     p = open_pos[0]
                     side = 'buy' if p.type==0 else 'sell'
-                    log(f"[wait] {len(open_pos)}/{MAX_POSITIONS} positions open ({side} profit={p.profit:.2f})")
+                    log(f"[wait] {len(open_pos)}/{max_pos} positions open ({side} profit={p.profit:.2f}) lot={lot}")
                 time.sleep(POLL_ANALYZE)
                 continue
             elif open_pos and cycle % 10 == 0:
-                log(f"[multi] {len(open_pos)}/{MAX_POSITIONS} positions open, looking for more signals...")
+                log(f"[multi] {len(open_pos)}/{max_pos} positions open, lot={lot}, looking for more signals...")
 
             # Ask AI to analyze
             analysis = app_post("/api/analyze", {
